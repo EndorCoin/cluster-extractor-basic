@@ -1,34 +1,38 @@
 import os
-from cStringIO import StringIO
+import re
 import struct
 import tempfile
+from cStringIO import StringIO
+
 import numpy as np
-import re
-import scipy.io as scio
 import pandas as pd
-from tempfile import NamedTemporaryFile
+import scipy.io as scio
 from scipy.sparse import csr_matrix
 
-class clustersExtractor(object):
+
+class ClustersExtractor(object):
+    MAT_INIT_NAME = 'blk_data'
+    MAT_FIELDS = {
+        'src': 2,
+        'type': 1,
+        'blk_type': 1,
+        'field': 1,
+        'fieldby': 1,
+        'N': 1,
+        'WN': 1,
+        'deg': 1,
+        'thrs': 2,
+        'SUB_CLUSTERS_FILE': 1,
+        'percInternal': 1
+    }
+
     def __init__(self, cluster_files_path):
         self.__path = cluster_files_path
-        self.__mat_init_name = 'blk_data'
-        self.__mat_fields = {
-            'src': 2,
-            'type': 1,
-            'blk_type': 1,
-            'field': 1,
-            'fieldby': 1,
-            'N': 1,
-            'WN': 1,
-            'deg': 1,
-            'thrs': 2,
-            'SUB_CLUSTERS_FILE': 1,
-            'percInternal': 1
-        }
+
     def get_path(self):
         return self.__path
-    def retrieveClusters(self):
+
+    def retrieve_clusters(self):
         pop_to_clusters_map = self.__build_pop_to_clusters_map()
         clusters_props = self.__build_mat_props_df()
         translation_pop = self.__get_translation_pop()
@@ -40,8 +44,7 @@ class clustersExtractor(object):
         indptr = self.__get_jc_list()
         pop_cluster_map = self.__build_pop_clust_matrix(dimensions_for_sparse_mat, indices, indptr)
         return pop_cluster_map
-    
-    
+
     def __get_dimensions_for_sparse_matrix(self):
         dimensions_file_name = "MtFile.spmat"
         all_files = self.__get_files_by_name_in_path(dimensions_file_name)
@@ -82,9 +85,9 @@ class clustersExtractor(object):
         jc = np.fromfile(local_temp_path, dtype=np.int64)
         os.unlink(local_temp_path)
         return jc
-    
-    def __build_pop_clust_matrix(self, dimensions_for_sparse_mat, indices, indptr):
 
+    @staticmethod
+    def __build_pop_clust_matrix(dimensions_for_sparse_mat, indices, indptr):
         nrows = dimensions_for_sparse_mat['n_rows']
         ncols = dimensions_for_sparse_mat['n_cols']
         nnz = dimensions_for_sparse_mat['nnz']
@@ -103,11 +106,11 @@ class clustersExtractor(object):
 
         if len(mat_names_list) > 1:
             prop_names = 'temp_'
-            mat_files = [scio.loadmat(StringIO(self.__open(mat_name).read())) for mat_name in mat_names_list]
+            mat_files = [scio.loadmat(os.path.expanduser(mat_name)) for mat_name in mat_names_list]
             props_df = self.__build_multiple_mat_clusters_properties(mat_files, prop_names)
         else:
             prop_names = 'blk_data'
-            mat_file = scio.loadmat(StringIO(self.__open(mat_names_list[0]).read()))
+            mat_file = scio.loadmat(os.path.expanduser(mat_names_list[0]))
             props_df = self.__build_single_mat_clusters_properties(mat_file, prop_names)
         return props_df
     
@@ -128,12 +131,11 @@ class clustersExtractor(object):
             raise ValueError(msg)
 
         cluster_prop_dict = {}
-        for prop_name, counts in self.__mat_fields.iteritems():
+        for prop_name, counts in self.MAT_FIELDS.iteritems():
             try:
                 mat_values = clusters_props[prop_name][0][0]
             except (KeyError, IndexError):
-                ValueError("Field %s doesn't exist in mat file, please remove it from config file."
-                                      % prop_name)
+                ValueError("Field {} doesn't exist in mat file, please remove it from config file.".format(prop_name))
                 break
             if counts == 1:
                 cluster_prop_dict[prop_name] = mat_values.flatten()
@@ -141,7 +143,6 @@ class clustersExtractor(object):
                 for i in np.arange(counts):
                     cluster_prop_dict[prop_name + '_' + str(i)] = mat_values[:, i]
         cluster_prop_df = pd.DataFrame(cluster_prop_dict)
-        # noinspection PyUnresolvedReferences
         cluster_prop_df.index.names = ['cluster']
         cluster_prop_df['W_prcntg'] = cluster_prop_df['WN'].astype(float) / cluster_prop_df['N'].astype(float)
         del mat_file
@@ -164,7 +165,6 @@ class clustersExtractor(object):
 
             if num[0] != len(ids):
                 msg = "translating ids went wrong. Found %d ids, where expected %d ids, aborting" % (len(ids), num[0])
-                self.__logger.error(msg)
                 raise ValueError(msg)
 
         os.unlink(local_temp_path)
@@ -176,8 +176,9 @@ class clustersExtractor(object):
 
         relevant_files = [file_name for file_name in all_files_in_dir if name in file_name]
         return relevant_files
-   
-    def __open(self, path):
+
+    @staticmethod
+    def __open(path):
         real_path = os.path.expanduser(path)
         if not os.path.isfile(real_path):
             raise LookupError('"{}"  does not exist'.format(real_path))
@@ -185,7 +186,7 @@ class clustersExtractor(object):
         return open(real_path, 'rb')
     
     def __get_mat_files_names(self):
-        mat_names_list = self.__get_files_by_name_in_path(self.__mat_init_name)
+        mat_names_list = self.__get_files_by_name_in_path(self.MAT_INIT_NAME)
         mat_names_list.sort(key=lambda x: int(re.search(r'\d+', x).group()))
         return mat_names_list
     
